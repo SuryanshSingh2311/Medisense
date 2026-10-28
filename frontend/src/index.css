@@ -1,0 +1,226 @@
+/* ==========================================================================
+   1. CSS VARIABLES (THEME & COLORS)
+   ========================================================================== */
+:root {
+  /* Backgrounds */
+  --bg-main: #080a0f;
+  
+  /* Typography */
+  --text-primary: #ffffff;
+  --text-secondary: #9ca3af;
+  --text-muted: #6b7280;
+  
+  /* Glassmorphism Variables */
+  --glass-bg: rgba(255, 255, 255, 0.035);
+  --glass-bg-hover: rgba(255, 255, 255, 0.065);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-border-hover: rgba(255, 255, 255, 0.22);
+  
+  /* Status Colors */
+  --color-blue: #3b82f6;
+  --color-green: #22c55e;
+  --color-yellow: #facc15;
+  --color-red: #ef4444;
+  
+  /* Transitions */
+  --transition-fast: 0.2s ease;
+}
+
+/* ==========================================================================
+   2. GLOBAL RESET & TYPOGRAPHY
+   ========================================================================== */
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background-color: var(--bg-main);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, p {
+  margin-top: 0;
+}
+
+a {
+  text-decoration: none;
+}
+
+/* ==========================================================================
+   3. CORE LAYOUT (App, Sidebar, Main Area)
+   ========================================================================== */
+.appWrapper {
+  display: flex;
+  min-height: 100vh;
+  background: var(--bg-main);
+}
+
+.sidebar {
+  width: 220px;
+  background: var(--glass-bg);
+  border-right: 1px solid var(--glass-border);
+  padding: 15px;
+  display: flex;
+  flex-direction: column;
+  backdrop-filter: blur(30px) saturate(100%);
+  -webkit-backdrop-filter: blur(30px) saturate(100%);
+  box-shadow: 10px 0 40px rgba(0, 0, 0, 0.25), inset -1px 0 rgba(255, 255, 255, 0.04);
+  
+  /* Make sidebar sticky so it stays put while scrolling long patient reports */
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  box-sizing: border-box;
+}
+
+.mainArea {
+  flex: 1;
+  padding: 20px 30px;
+  box-sizing: border-box;
+  overflow-y: auto;
+}
+
+/* ==========================================================================
+   4. GLASSMORPHISM CARDS & CONTAINERS
+   ========================================================================== */
+.card {
+  position: relative;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  padding: 20px;
+  backdrop-filter: blur(24px) saturate(100%);
+  -webkit-backdrop-filter: blur(24px) saturate(100%);
+  box-shadow: 
+    0 18px 45px rgba(0, 0, 0, 0.25), 
+    inset 0 1px 1px rgba(255, 255, 255, 0.08);
+  transition: all 0.25s ease;
+  overflow: hidden;
+}
+
+/* Adds the subtle light bleed effect at the top of cards */
+.card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.06), transparent 32%, transparent 70%, rgba(255, 255, 255, 0.015));
+  pointer-events: none;
+}
+
+.card:hover {
+  background: var(--glass-bg-hover);
+  border-color: var(--glass-border-hover);
+  transform: translateY(-2px);
+}
+
+.threeCol {
+  display: flex;
+  gap: 15px;
+  margin-bottom: 20px;
+}
+
+.threeCol > * {
+  flex: 1;
+}
+
+/* ==========================================================================
+   5. UI ELEMENTS (Badges, Links, Stats)
+   ========================================================================== */
+.badgeBlue, .badgeGreen, .badgeYellow, .badgeRed {
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  display: inline-block;
+}
+
+.badgeBlue { background: rgba(59, 130, 246, 0.15); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.3); }
+.badgeGreen { background: rgba(34, 197, 94, 0.15); color: #86efac; border: 1px solid rgba(34, 197, 94, 0.3); }
+.badgeYellow { background: rgba(234, 179, 8, 0.15); color: #fde047; border: 1px solid rgba(234, 179, 8, 0.3); }
+.badgeRed { background: rgba(239, 68, 68, 0.15); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.3); }
+
+.link {
+  color: #d1d5db;
+  font-size: 13px;
+  display: inline-block;
+  margin-top: 10px;
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+.link:hover {
+  color: var(--text-primary);
+}
+
+/* ==========================================================================
+   6. FORMS, INPUTS & BUTTONS (Required for Backend Integration)
+   ========================================================================== */
+.formGroup {
+  margin-bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.formLabel {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.inputField, .textArea {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  padding: 12px 15px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 14px;
+  transition: all var(--transition-fast);
+}
+
+.inputField:focus, .textArea:focus {
+  outline: none;
+  border-color: var(--color-blue);
+  background: rgba(0, 0, 0, 0.5);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+}
+
+.textArea {
+  resize: vertical;
+  min-height: 100px;
+}
+
+.btnPrimary {
+  background: var(--color-blue);
+  color: white;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  box-shadow: 0 4px 15px rgba(59, 130, 246, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.btnPrimary:hover {
+  background: #2563eb;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(59, 130, 246, 0.5);
+}
+
+.btnPrimary:disabled {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-secondary);
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
