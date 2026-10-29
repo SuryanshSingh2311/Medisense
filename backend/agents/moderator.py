@@ -5,6 +5,8 @@ from pydantic import BaseModel, Field, ValidationError
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_openrouter import ChatOpenRouter
+from config import settings
+
 # -------------------------------------------------------------------------
 # 1. Logging Configuration
 # -------------------------------------------------------------------------
@@ -32,16 +34,15 @@ class ModeratorDirective(BaseModel):
     )
 
 # -------------------------------------------------------------------------
-# 3. Model & Prompt Configuration (Hugging Face API)
+# 3. Model Configuration (OpenRouter)
 # -------------------------------------------------------------------------
 def get_openrouter_llm():
-    api_key = os.getenv("OPENROUTER_API_KEY")
+    api_key = settings.openrouter_api_key or os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         raise ValueError("OPENROUTER_API_KEY environment variable is not set in .env")
 
     return ChatOpenRouter(
-        # OpenRouter has excellent free models that natively support JSON formatting
-        model="meta-llama/llama-3.3-70b-instruct:free", 
+        model=settings.model_id, 
         api_key=api_key,
         temperature=0.0,
         max_retries=3
@@ -61,12 +62,8 @@ RULES:
 # 4. Core Agent Node Function
 # -------------------------------------------------------------------------
 def run_moderator_agent(state: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    LangGraph node function for the Moderator Agent.
-    """
     logger.warning("Initializing Moderator Agent (Conflict Resolution Triggered)...")
     
-    # 1. Retrieve the rejected plan and pharmacology feedback
     treatment_plan = state.get("treatment_plan", {})
     pharmacology = state.get("pharmacology_data", {})
     current_retries = state.get("retry_count", 0)
@@ -75,7 +72,6 @@ def run_moderator_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     identified_risks = pharmacology.get("identified_risks", [])
     suggested_mods = pharmacology.get("recommended_modifications", "None provided.")
 
-    # 2. Construct the conflict context
     conflict_context = f"""
     --- REJECTED REGIMEN ---
     {rejected_regimen}
@@ -85,9 +81,9 @@ def run_moderator_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     Pharmacologist Suggestions: {suggested_mods}
     """
 
-    # 3. Setup LLM with structured output binding
     try:
-        llm = get_hf_moderator_llm()
+        # FIXED: Use correct openrouter loader function
+        llm = get_openrouter_llm()
         structured_llm = llm.with_structured_output(ModeratorDirective)
         
         prompt = ChatPromptTemplate.from_messages([
@@ -98,12 +94,11 @@ def run_moderator_agent(state: Dict[str, Any]) -> Dict[str, Any]:
         moderator_chain = prompt | structured_llm
         
     except Exception as e:
-        logger.error(f"Failed to initialize Hugging Face LLM chain: {str(e)}")
+        logger.error(f"Failed to initialize OpenRouter LLM chain: {str(e)}")
         raise
 
-    # 4. Execute moderation
     try:
-        logger.info(f"Generating strict revision directives (Attempt {current_retries + 1})...")
+        logger.info(f"Generating strict revision directives via OpenRouter (Attempt {current_retries + 1})...")
         moderator_result: ModeratorDirective = moderator_chain.invoke({})
         logger.info(f"Directive issued: {moderator_result.mandatory_adjustments}")
         

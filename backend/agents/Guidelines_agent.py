@@ -1,11 +1,11 @@
 import os
 import logging
 from typing import Dict, Any
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_openrouter import ChatOpenRouter
-# The standard Python client for communicating with decoupled MCP microservices
+from config import settings
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
 
@@ -39,16 +39,15 @@ class GuidelinesData(BaseModel):
     retrieval_successful: bool
 
 # -------------------------------------------------------------------------
-# 3. Model Configuration (Hugging Face API)
+# 3. Model Configuration (OpenRouter)
 # -------------------------------------------------------------------------
 def get_openrouter_llm():
-    api_key = os.getenv("OPENROUTER_API_KEY")
+    api_key = settings.openrouter_api_key or os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         raise ValueError("OPENROUTER_API_KEY environment variable is not set in .env")
 
     return ChatOpenRouter(
-        # OpenRouter has excellent free models that natively support JSON formatting
-        model="meta-llama/llama-3.3-70b-instruct:free", 
+        model=settings.model_id, 
         api_key=api_key,
         temperature=0.0,
         max_retries=3
@@ -68,20 +67,13 @@ RULES:
 # 4. FastMCP Tool Execution Helper
 # -------------------------------------------------------------------------
 async def fetch_guidelines_via_mcp(query: str, source: str) -> str:
-    """
-    Connects to the decoupled FastMCP Vector DB server to retrieve guidelines.
-    Expects a running FastMCP server at the specified URL.
-    """
-    mcp_server_url = os.getenv("FASTMCP_RAG_SERVER", "http://localhost:8000/mcp")
+    mcp_server_url = settings.fastmcp_rag_server
     
     try:
-        # FastMCP Client requires an async context manager
         async with Client(mcp_server_url, mode="auto") as client:
             tool_name = "search_nccn" if source == "NCCN" else "search_esmo"
-            
             logger.info(f"Calling MCP Tool '{tool_name}' with query: {query}")
             
-            # Execute the server-side tool and retrieve the data property
             result = await client.call_tool(tool_name, {"query": query, "top_k": 3})
             
             if result.data is not None:
@@ -99,12 +91,8 @@ async def fetch_guidelines_via_mcp(query: str, source: str) -> str:
 # 5. Core Agent Node Function (Async)
 # -------------------------------------------------------------------------
 async def run_guidelines_agent(state: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    LangGraph async node function for the Guidelines Agent.
-    """
     logger.info("Initializing Guidelines Agent...")
     
-    # 1. Aggregate previously extracted state data
     pathology = state.get("pathology_data", {})
     radiology = state.get("radiology_data", {})
     genomics = state.get("genomics_data", {})
@@ -115,9 +103,9 @@ async def run_guidelines_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     GENOMICS: EGFR: {genomics.get('egfr_status', 'Unknown')}, KRAS: {genomics.get('kras_status', 'Unknown')}, PD-L1: {genomics.get('pd_l1_expression', 'Unknown')}
     """
 
-    # 2. Generate the optimized search query using HF Model
     try:
-        llm = get_hf_query_llm()
+        # FIXED: Use correct openrouter loader function
+        llm = get_openrouter_llm()
         structured_llm = llm.with_structured_output(QueryGeneration)
         
         prompt = ChatPromptTemplate.from_messages([
@@ -126,7 +114,7 @@ async def run_guidelines_agent(state: Dict[str, Any]) -> Dict[str, Any]:
         ])
         
         query_chain = prompt | structured_llm
-        logger.info("Generating optimized vector search query...")
+        logger.info("Generating optimized vector search query via OpenRouter...")
         query_result: QueryGeneration = query_chain.invoke({})
         
     except Exception as e:
@@ -139,13 +127,11 @@ async def run_guidelines_agent(state: Dict[str, Any]) -> Dict[str, Any]:
         )
         return {"guidelines_data": fallback_data.model_dump()}
 
-    # 3. Execute Parallel FastMCP Tool Calls
     logger.info(f"Query generated: '{query_result.vector_search_query}'")
     
     nccn_results = await fetch_guidelines_via_mcp(query_result.vector_search_query, "NCCN")
     esmo_results = await fetch_guidelines_via_mcp(query_result.vector_search_query, "ESMO")
 
-    # 4. Update the state with retrieved context
     final_data = GuidelinesData(
         clinical_summary=query_result.clinical_summary,
         nccn_retrieval=nccn_results,

@@ -5,6 +5,8 @@ from pydantic import BaseModel, Field, ValidationError
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_openrouter import ChatOpenRouter
+from config import settings
+
 # -------------------------------------------------------------------------
 # 1. Logging Configuration
 # -------------------------------------------------------------------------
@@ -41,16 +43,15 @@ class OncologyDraft(BaseModel):
     )
 
 # -------------------------------------------------------------------------
-# 3. Model & Prompt Configuration (Hugging Face API)
+# 3. Model Configuration (OpenRouter)
 # -------------------------------------------------------------------------
 def get_openrouter_llm():
-    api_key = os.getenv("OPENROUTER_API_KEY")
+    api_key = settings.openrouter_api_key or os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         raise ValueError("OPENROUTER_API_KEY environment variable is not set in .env")
 
     return ChatOpenRouter(
-        # OpenRouter has excellent free models that natively support JSON formatting
-        model="meta-llama/llama-3.3-70b-instruct:free", 
+        model=settings.model_id, 
         api_key=api_key,
         temperature=0.0,
         max_retries=3
@@ -71,18 +72,14 @@ RULES:
 # 4. Core Agent Node Function
 # -------------------------------------------------------------------------
 def run_oncology_agent(state: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    LangGraph node function for the Oncology Agent.
-    """
     logger.info("Initializing Oncology Agent (Treatment Synthesis)...")
     
-    # 1. Retrieve prior state data
     pathology = state.get("pathology_data", {})
     radiology = state.get("radiology_data", {})
     genomics = state.get("genomics_data", {})
     guidelines = state.get("guidelines_data", {})
+    moderator = state.get("moderator_data", {})
     
-    # 2. Construct the synthesis payload
     clinical_context = f"""
     --- PATIENT DIAGNOSTICS ---
     Pathology: {pathology.get('histology_type', 'N/A')}, Grade: {pathology.get('tumor_grade', 'N/A')}
@@ -95,9 +92,19 @@ def run_oncology_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     ESMO Protocols: {guidelines.get('esmo_retrieval', 'No ESMO data available.')}
     """
 
-    # 3. Setup LLM with structured output binding
+    # Inject Moderator constraints if this is a retry cycle
+    if state.get("retry_count", 0) > 0 and moderator:
+        logger.warning("Renegotiation Cycle detected. Injecting Moderator constraints.")
+        clinical_context += f"""
+        --- CRITICAL MODERATOR DIRECTIVE (PREVIOUS DRAFT REJECTED) ---
+        Reason for rejection: {moderator.get('conflict_summary')}
+        Mandatory Adjustments: {moderator.get('mandatory_adjustments')}
+        YOU MUST FOLLOW THESE ADJUSTMENTS IN YOUR NEW DRAFT.
+        """
+
     try:
-        llm = get_hf_oncology_llm()
+        # FIXED: Use correct openrouter loader function
+        llm = get_openrouter_llm()
         structured_llm = llm.with_structured_output(OncologyDraft)
         
         prompt = ChatPromptTemplate.from_messages([
@@ -108,12 +115,11 @@ def run_oncology_agent(state: Dict[str, Any]) -> Dict[str, Any]:
         oncology_chain = prompt | structured_llm
         
     except Exception as e:
-        logger.error(f"Failed to initialize Hugging Face LLM chain: {str(e)}")
+        logger.error(f"Failed to initialize OpenRouter LLM chain: {str(e)}")
         raise
 
-    # 4. Execute synthesis
     try:
-        logger.info(f"Invoking HF Model ({os.getenv('HF_MODEL_ID', 'Mixtral-8x7B')}) for plan drafting...")
+        logger.info(f"Invoking OpenRouter Model ({settings.model_id}) for plan drafting...")
         draft_result: OncologyDraft = oncology_chain.invoke({})
         logger.info(f"Draft successful. Recommended Regimen: {draft_result.recommended_regimen}")
         
@@ -142,21 +148,3 @@ def run_oncology_agent(state: Dict[str, Any]) -> Dict[str, Any]:
             drafting_successful=False
         )
         return {"treatment_plan": fallback_data.model_dump()}
-    
-    moderator = state.get("moderator_data", {})
-    
-    clinical_context = f"""
-    --- PATIENT DIAGNOSTICS ---
-    Pathology: {pathology.get('histology_type', 'N/A')}
-    Radiology: {radiology.get('clinical_staging', 'N/A')}
-    ...
-    """
-
-    if state.get("retry_count", 0) > 0 and moderator:
-        logger.warning("Renegotiation Cycle detected. Injecting Moderator constraints.")
-        clinical_context += f"""
-        --- CRITICAL MODERATOR DIRECTIVE (PREVIOUS DRAFT REJECTED) ---
-        Reason for rejection: {moderator.get('conflict_summary')}
-        Mandatory Adjustments: {moderator.get('mandatory_adjustments')}
-        YOU MUST FOLLOW THESE ADJUSTMENTS IN YOUR NEW DRAFT.
-        """

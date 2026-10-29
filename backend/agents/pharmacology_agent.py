@@ -5,6 +5,8 @@ from pydantic import BaseModel, Field, ValidationError
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_openrouter import ChatOpenRouter
+from config import settings
+
 # -------------------------------------------------------------------------
 # 1. Logging Configuration
 # -------------------------------------------------------------------------
@@ -38,16 +40,15 @@ class PharmacologyEvaluation(BaseModel):
     )
 
 # -------------------------------------------------------------------------
-# 3. Model & Prompt Configuration (Hugging Face API)
+# 3. Model Configuration (OpenRouter)
 # -------------------------------------------------------------------------
 def get_openrouter_llm():
-    api_key = os.getenv("OPENROUTER_API_KEY")
+    api_key = settings.openrouter_api_key or os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         raise ValueError("OPENROUTER_API_KEY environment variable is not set in .env")
 
     return ChatOpenRouter(
-        # OpenRouter has excellent free models that natively support JSON formatting
-        model="meta-llama/llama-3.3-70b-instruct:free", 
+        model=settings.model_id, 
         api_key=api_key,
         temperature=0.0,
         max_retries=3
@@ -70,16 +71,11 @@ RULES:
 # 4. Core Agent Node Function
 # -------------------------------------------------------------------------
 def run_pharmacology_agent(state: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    LangGraph node function for the Pharmacology Agent.
-    """
     logger.info("Initializing Pharmacology Agent (Safety Guardrail)...")
     
-    # 1. Retrieve the drafted plan and patient labs from state
     treatment_plan = state.get("treatment_plan", {})
     patient_labs = state.get("patient_labs", {})
     
-    # Extract the specific regimen to test
     proposed_regimen = treatment_plan.get("recommended_regimen", "No regimen provided.")
     
     if not proposed_regimen or proposed_regimen == "No regimen provided.":
@@ -93,7 +89,6 @@ def run_pharmacology_agent(state: Dict[str, Any]) -> Dict[str, Any]:
         )
         return {"pharmacology_data": fallback.model_dump(), "consensus_reached": False}
 
-    # 2. Construct the evaluation context
     eval_context = f"""
     --- PROPOSED ONCOLOGY REGIMEN ---
     {proposed_regimen}
@@ -107,9 +102,9 @@ def run_pharmacology_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     {', '.join(patient_labs.get('active_medications', [])) if patient_labs.get('active_medications') else 'None'}
     """
 
-    # 3. Setup LLM with structured output binding
     try:
-        llm = get_hf_pharmacology_llm()
+        # FIXED: Use correct openrouter loader function
+        llm = get_openrouter_llm()
         structured_llm = llm.with_structured_output(PharmacologyEvaluation)
         
         prompt = ChatPromptTemplate.from_messages([
@@ -120,20 +115,17 @@ def run_pharmacology_agent(state: Dict[str, Any]) -> Dict[str, Any]:
         pharmacology_chain = prompt | structured_llm
         
     except Exception as e:
-        logger.error(f"Failed to initialize Hugging Face LLM chain: {str(e)}")
+        logger.error(f"Failed to initialize OpenRouter LLM chain: {str(e)}")
         raise
 
-    # 4. Execute safety evaluation
     try:
-        logger.info("Running cross-checks against patient labs and active meds...")
+        logger.info("Running cross-checks against patient labs and active meds via OpenRouter...")
         eval_result: PharmacologyEvaluation = pharmacology_chain.invoke({})
         
         logger.info(f"Evaluation complete. Safe: {eval_result.is_safe}")
         if not eval_result.is_safe:
             logger.warning(f"Safety risks identified: {eval_result.identified_risks}")
         
-        # Crucial: This node updates BOTH the pharmacology data and the global consensus flag
-        # The consensus_reached flag is what graph.py uses for the conditional edge routing
         return {
             "pharmacology_data": eval_result.model_dump(),
             "consensus_reached": eval_result.is_safe
@@ -142,7 +134,7 @@ def run_pharmacology_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     except ValidationError as ve:
         logger.error(f"Pydantic Validation Error: {str(ve)}")
         fallback = PharmacologyEvaluation(
-            is_safe=False, # Default to unsafe if we can't parse the output
+            is_safe=False,
             identified_risks=["System Parsing Error - Cannot verify safety."],
             pharmacology_notes="Model output could not be formatted.",
             recommended_modifications="Manual physician review required.",
