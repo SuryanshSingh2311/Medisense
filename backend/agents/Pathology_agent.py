@@ -5,6 +5,8 @@ from pydantic import BaseModel, Field, ValidationError
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_openrouter import ChatOpenRouter
+from config import settings
+
 # -------------------------------------------------------------------------
 # 1. Logging Configuration
 # -------------------------------------------------------------------------
@@ -35,19 +37,15 @@ class PathologyExtraction(BaseModel):
     )
 
 # -------------------------------------------------------------------------
-# 3. Model Configuration (Raw Hugging Face Endpoint)
-# -------------------------------------------------------------------------
-# -------------------------------------------------------------------------
-# 3. Model Configuration (Raw Hugging Face Endpoint)
+# 3. Model Configuration (OpenRouter)
 # -------------------------------------------------------------------------
 def get_openrouter_llm():
-    api_key = os.getenv("OPENROUTER_API_KEY")
+    api_key = settings.openrouter_api_key or os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         raise ValueError("OPENROUTER_API_KEY environment variable is not set in .env")
 
     return ChatOpenRouter(
-        # OpenRouter has excellent free models that natively support JSON formatting
-        model="meta-llama/llama-3.3-70b-instruct:free", 
+        model=settings.model_id, 
         api_key=api_key,
         temperature=0.0,
         max_retries=3
@@ -76,11 +74,10 @@ EXTRACT FROM THIS PATHOLOGY REPORT:
 # -------------------------------------------------------------------------
 def run_pathology_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     """
-    LangGraph node function for the Pathology Agent using Hugging Face API.
+    LangGraph node function for the Pathology Agent using OpenRouter.
     """
-    logger.info("Initializing Pathology Agent extraction via Hugging Face Endpoint...")
+    logger.info("Initializing Pathology Agent extraction via OpenRouter...")
     
-    # 1. Retrieve the raw report from the global state
     raw_report = state.get("raw_pathology_report", "").strip()
     
     if not raw_report:
@@ -93,9 +90,9 @@ def run_pathology_agent(state: Dict[str, Any]) -> Dict[str, Any]:
         )
         return {"pathology_data": fallback_data.model_dump()}
 
-    # 2. Setup LLM, Parser, and Prompt Pipeline
     try:
-        llm = get_hf_llm()
+        # FIXED: Calling correct openrouter loader instead of missing get_hf_llm()
+        llm = get_openrouter_llm()
         parser = JsonOutputParser(pydantic_object=PathologyExtraction)
         
         prompt = PromptTemplate(
@@ -104,30 +101,27 @@ def run_pathology_agent(state: Dict[str, Any]) -> Dict[str, Any]:
             partial_variables={"format_instructions": parser.get_format_instructions()},
         )
         
-        # Chain them together
         pathology_chain = prompt | llm | parser
         
     except Exception as e:
-        logger.error(f"Failed to initialize Hugging Face LLM chain: {str(e)}")
+        logger.error(f"Failed to initialize OpenRouter LLM chain: {str(e)}")
         raise
 
-    # 3. Execute extraction with error boundaries
     try:
-        logger.info(f"Invoking HF Endpoint (Mistral-7B) for structured extraction...")
+        logger.info(f"Invoking OpenRouter Model ({settings.model_id}) for structured extraction...")
         extraction_result = pathology_chain.invoke({"raw_report": raw_report})
         
         logger.info(f"Extraction successful: {extraction_result.get('histology_type')}, {extraction_result.get('tumor_grade')}")
         
-        # Because JsonOutputParser returns a dict directly, we ensure the 'extraction_successful' flag is present
         extraction_result["extraction_successful"] = True
         return {"pathology_data": extraction_result}
 
     except ValidationError as ve:
-        logger.error(f"Pydantic Validation Error (HF Model failed strict schema): {str(ve)}")
+        logger.error(f"Pydantic Validation Error (Model failed strict schema): {str(ve)}")
         fallback_data = PathologyExtraction(
             histology_type="Extraction Error",
             tumor_grade="Extraction Error",
-            biopsy_findings="Model failed to parse data into required format. Raw report exists but could not be structured.",
+            biopsy_findings="Model failed to parse data into required format.",
             extraction_successful=False
         )
         return {"pathology_data": fallback_data.model_dump()}
@@ -137,7 +131,7 @@ def run_pathology_agent(state: Dict[str, Any]) -> Dict[str, Any]:
         fallback_data = PathologyExtraction(
             histology_type="System Error",
             tumor_grade="System Error",
-            biopsy_findings="Hugging Face API endpoint failed, timed out, or rate limit exceeded.",
+            biopsy_findings=f"API execution error: {str(e)}",
             extraction_successful=False
         )
         return {"pathology_data": fallback_data.model_dump()}

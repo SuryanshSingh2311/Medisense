@@ -5,6 +5,8 @@ from pydantic import BaseModel, Field, ValidationError
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_openrouter import ChatOpenRouter
+from config import settings
+
 # -------------------------------------------------------------------------
 # 1. Logging Configuration
 # -------------------------------------------------------------------------
@@ -41,16 +43,15 @@ class RadiologyExtraction(BaseModel):
     )
 
 # -------------------------------------------------------------------------
-# 3. Model & Prompt Configuration (Hugging Face API)
+# 3. Model & Prompt Configuration (OpenRouter)
 # -------------------------------------------------------------------------
 def get_openrouter_llm():
-    api_key = os.getenv("OPENROUTER_API_KEY")
+    api_key = settings.openrouter_api_key or os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         raise ValueError("OPENROUTER_API_KEY environment variable is not set in .env")
 
     return ChatOpenRouter(
-        # OpenRouter has excellent free models that natively support JSON formatting
-        model="meta-llama/llama-3.3-70b-instruct:free", 
+        model=settings.model_id, 
         api_key=api_key,
         temperature=0.0,
         max_retries=3
@@ -72,11 +73,10 @@ RULES:
 # -------------------------------------------------------------------------
 def run_radiology_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     """
-    LangGraph node function for the Radiology Agent.
+    LangGraph node function for the Radiology Agent via OpenRouter.
     """
-    logger.info("Initializing Radiology Agent extraction via Hugging Face API...")
+    logger.info("Initializing Radiology Agent extraction via OpenRouter...")
     
-    # 1. Retrieve the raw report from the global state
     raw_report = state.get("raw_radiology_report", "").strip()
     
     if not raw_report:
@@ -91,9 +91,9 @@ def run_radiology_agent(state: Dict[str, Any]) -> Dict[str, Any]:
         )
         return {"radiology_data": fallback_data.model_dump()}
 
-    # 2. Setup LLM with structured output binding
     try:
-        llm = get_hf_radiology_llm()
+        # FIXED: Calling correct openrouter loader instead of missing get_hf_radiology_llm()
+        llm = get_openrouter_llm()
         structured_llm = llm.with_structured_output(RadiologyExtraction)
         
         prompt = ChatPromptTemplate.from_messages([
@@ -104,19 +104,18 @@ def run_radiology_agent(state: Dict[str, Any]) -> Dict[str, Any]:
         radiology_chain = prompt | structured_llm
         
     except Exception as e:
-        logger.error(f"Failed to initialize Hugging Face LLM chain: {str(e)}")
+        logger.error(f"Failed to initialize OpenRouter LLM chain: {str(e)}")
         raise
 
-    # 3. Execute extraction with error boundaries
     try:
-        logger.info(f"Invoking HF Model ({os.getenv('HF_MODEL_ID', 'Mixtral-8x7B')}) for structured extraction...")
+        logger.info(f"Invoking OpenRouter Model ({settings.model_id}) for structured extraction...")
         extraction_result: RadiologyExtraction = radiology_chain.invoke({})
         logger.info(f"Extraction successful: Mass at {extraction_result.primary_mass_location}, {len(extraction_result.metastasis_sites)} met sites identified.")
         
         return {"radiology_data": extraction_result.model_dump()}
 
     except ValidationError as ve:
-        logger.error(f"Pydantic Validation Error (HF Model failed strict schema): {str(ve)}")
+        logger.error(f"Pydantic Validation Error (Model failed strict schema): {str(ve)}")
         fallback_data = RadiologyExtraction(
             imaging_modality="Extraction Error",
             primary_mass_location="Extraction Error",
